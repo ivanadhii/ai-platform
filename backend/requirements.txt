@@ -1,0 +1,46 @@
+# Your current requirements.txt PLUS these additions:
+
+# === EXISTING (ALREADY GOOD) ===
+fastapi==0.104.1
+uvicorn[standard]==0.24.0
+sqlalchemy==2.0.23
+psycopg2-binary==2.9.9
+alembic==1.13.1
+fastapi-users[sqlalchemy]==12.1.2
+python-jose[cryptography]==3.3.0
+passlib[bcrypt]==1.7.4
+celery==5.3.4
+redis==5.0.1
+python-multipart==0.0.6
+python-dotenv==1.0.0
+numpy>=1.23.2,<2
+pandas==2.1.4
+scikit-learn==1.3.2
+
+# === MISSING - NEED TO ADD ===
+# Async Database Support (for FastAPI-Users)
+asyncpg==0.29.0
+
+# NLP Processing (for Indonesian text like OSS project)
+nltk==3.8.1
+
+# Advanced ML Features
+joblib==1.3.2
+
+# File Handling & Validation
+aiofiles==23.2.0
+openpyxl==3.1.2
+
+# API Documentation Enhancement
+pydantic[email]==2.5.0
+
+# Testing (Development)
+pytest==7.4.3
+pytest-asyncio==0.21.1
+httpx==0.25.2
+
+# Production Monitoring (Optional)
+prometheus-client==0.19.0
+
+# Excel/CSV Processing (for dataset uploads)
+xlrd==2.0.1
