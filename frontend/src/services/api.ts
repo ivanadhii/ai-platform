@@ -1,3 +1,5 @@
+// frontend/src/services/api.ts - Updated with Real Upload Endpoints
+
 import axios, { AxiosInstance, AxiosResponse } from 'axios';
 
 // API Configuration
@@ -89,7 +91,7 @@ export class ApiService {
     return response.data;
   }
 
-  // Project management endpoints (to be implemented in backend)
+  // Project management endpoints
   static async getProjects() {
     const response = await apiClient.get('/projects');
     return response.data;
@@ -114,52 +116,125 @@ export class ApiService {
     return response.data;
   }
 
-  // File upload endpoints (to be implemented)
-  static async uploadFile(file: File, projectId: string) {
+  // ===== ENHANCED FILE UPLOAD ENDPOINTS =====
+  
+  static async uploadFile(file: File, projectId: string, onProgress?: (progress: number) => void) {
     const formData = new FormData();
     formData.append('file', file);
-    formData.append('project_id', projectId);
 
-    const response = await apiClient.post('/upload', formData, {
+    const response = await apiClient.post(`/upload/file/${projectId}`, formData, {
       headers: {
         'Content-Type': 'multipart/form-data',
+      },
+      onUploadProgress: (progressEvent) => {
+        if (progressEvent.total && onProgress) {
+          const percentCompleted = Math.round((progressEvent.loaded * 100) / progressEvent.total);
+          onProgress(percentCompleted);
+        }
       },
     });
     return response.data;
   }
 
-  // Model training endpoints (to be implemented)
+  static async getDatasetPreview(
+    datasetId: string, 
+    rows: number = 10, 
+    page: number = 1
+  ) {
+    const response = await apiClient.get(`/upload/dataset/${datasetId}/preview`, {
+      params: { rows, page }
+    });
+    return response.data;
+  }
+
+  static async getDatasetColumns(datasetId: string) {
+    const response = await apiClient.get(`/upload/dataset/${datasetId}/columns`);
+    return response.data;
+  }
+
+  static async deleteDataset(datasetId: string) {
+    const response = await apiClient.delete(`/upload/dataset/${datasetId}`);
+    return response.data;
+  }
+
+  static async validateDatasetForTraining(
+    datasetId: string,
+    targetColumn: string,
+    featureColumns: string[]
+  ) {
+    const formData = new FormData();
+    formData.append('target_column', targetColumn);
+    featureColumns.forEach(col => {
+      formData.append('feature_columns', col);
+    });
+
+    const response = await apiClient.post(`/upload/dataset/${datasetId}/validate`, formData, {
+      headers: {
+        'Content-Type': 'application/x-www-form-urlencoded',
+      },
+    });
+    return response.data;
+  }
+
+  // ===== TRAINING ENDPOINTS (for Phase 4) =====
+  
   static async startTraining(trainingConfig: {
-    project_id: string;
+    dataset_id: string;
     target_column: string;
+    feature_columns: string[];
     test_size: number;
     algorithm?: string;
+    preprocessing?: any;
   }) {
-    const response = await apiClient.post('/train', trainingConfig);
+    const response = await apiClient.post('/train/start', trainingConfig);
     return response.data;
   }
 
   static async getTrainingStatus(jobId: string) {
-    const response = await apiClient.get(`/training/${jobId}/status`);
+    const response = await apiClient.get(`/train/job/${jobId}/status`);
     return response.data;
   }
 
   static async getTrainingResults(jobId: string) {
-    const response = await apiClient.get(`/training/${jobId}/results`);
+    const response = await apiClient.get(`/train/job/${jobId}/results`);
     return response.data;
   }
 
-  // Model deployment endpoints (to be implemented)
+  static async getTrainingLogs(jobId: string) {
+    const response = await apiClient.get(`/train/job/${jobId}/logs`);
+    return response.data;
+  }
+
+  // ===== MODEL MANAGEMENT ENDPOINTS =====
+  
+  static async getModels(projectId?: string) {
+    const params = projectId ? { project_id: projectId } : {};
+    const response = await apiClient.get('/models', { params });
+    return response.data;
+  }
+
+  static async getModel(modelId: string) {
+    const response = await apiClient.get(`/models/${modelId}`);
+    return response.data;
+  }
+
   static async deployModel(modelId: string) {
     const response = await apiClient.post(`/models/${modelId}/deploy`);
     return response.data;
   }
 
-  static async getModelEndpoint(modelId: string) {
-    const response = await apiClient.get(`/models/${modelId}/endpoint`);
+  static async undeployModel(modelId: string) {
+    const response = await apiClient.post(`/models/${modelId}/undeploy`);
     return response.data;
   }
 
+  static async deleteModel(modelId: string) {
+    const response = await apiClient.delete(`/models/${modelId}`);
+    return response.data;
+  }
+
+  // ===== MODEL INFERENCE ENDPOINTS =====
+  
   static async predictWithModel(modelId: string, inputData: any) {
     const response = await apiClient.post(`/models/${modelId}/predict`, {
       data: inputData,
@@ -167,17 +242,99 @@ export class ApiService {
     return response.data;
   }
 
-  // Dashboard statistics
+  static async batchPredict(modelId: string, batchData: any[]) {
+    const response = await apiClient.post(`/models/${modelId}/predict/batch`, {
+      data: batchData,
+    });
+    return response.data;
+  }
+
+  // ===== ANALYTICS & MONITORING =====
+  
   static async getDashboardStats() {
     const response = await apiClient.get('/dashboard/stats');
     return response.data;
   }
 
-  // Health check
+  static async getUsageAnalytics(period: 'week' | 'month' | 'year' = 'month') {
+    const response = await apiClient.get('/analytics/usage', {
+      params: { period }
+    });
+    return response.data;
+  }
+
+  static async getModelPerformance(modelId: string) {
+    const response = await apiClient.get(`/analytics/models/${modelId}/performance`);
+    return response.data;
+  }
+
+  // ===== UTILITY ENDPOINTS =====
+  
   static async healthCheck() {
     const response = await apiClient.get('/health');
+    return response.data;
+  }
+
+  static async getServerInfo() {
+    const response = await apiClient.get('/');
+    return response.data;
+  }
+
+  static async testDatabaseConnection() {
+    const response = await apiClient.get('/test-db');
     return response.data;
   }
 }
 
 export default ApiService;
+
+// ===== UTILITY FUNCTIONS =====
+
+export const handleApiError = (error: any): string => {
+  if (error.response) {
+    // Server responded with error status
+    const { status, data } = error.response;
+    
+    if (status === 400) {
+      return data.detail || 'Invalid request. Please check your input.';
+    } else if (status === 401) {
+      return 'Authentication failed. Please log in again.';
+    } else if (status === 403) {
+      return 'Access denied. You do not have permission for this action.';
+    } else if (status === 404) {
+      return 'Resource not found.';
+    } else if (status === 413) {
+      return 'File too large. Please upload a smaller file.';
+    } else if (status === 422) {
+      return data.detail || 'Invalid data format.';
+    } else if (status >= 500) {
+      return 'Server error. Please try again later.';
+    }
+    
+    return data.detail || data.message || `Error ${status}: ${error.response.statusText}`;
+  } else if (error.request) {
+    // Request made but no response received
+    return 'Network error. Please check your connection and try again.';
+  } else {
+    // Something else happened
+    return error.message || 'An unexpected error occurred.';
+  }
+};
+
+export const formatFileSize = (bytes: number): string => {
+  if (bytes === 0) return '0 Bytes';
+  const k = 1024;
+  const sizes = ['Bytes', 'KB', 'MB', 'GB'];
+  const i = Math.floor(Math.log(bytes) / Math.log(k));
+  return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
+};
+
+export const validateFileType = (file: File, allowedTypes: string[]): boolean => {
+  const fileExtension = file.name.toLowerCase().split('.').pop();
+  const mimeType = file.type.toLowerCase();
+  
+  return allowedTypes.some(type => 
+    mimeType === type || 
+    file.name.toLowerCase().endsWith(type.replace('application/', '.').replace('text/', '.'))
+  );
+};

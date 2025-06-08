@@ -1,3 +1,5 @@
+// frontend/src/pages/TestFileUpload.tsx - Updated for Real Data
+
 import React, { useState } from 'react';
 import {
   Box,
@@ -9,32 +11,78 @@ import {
   Paper,
   Chip,
   Button,
-  Alert
+  Alert,
+  CircularProgress
 } from '@mui/material';
 import { FileUploader, DataPreview, ColumnMapper } from '../components/FileUpload';
 import type { UploadedFile, DataValidation, TrainingConfiguration } from '../components/FileUpload';
 
+// Updated interfaces for real data
+interface RealDatasetInfo {
+  dataset_id: string;
+  filename: string;
+  file_size: number;
+  rows_count: number;
+  columns_count: number;
+  upload_status: string;
+  uploaded_at: string;
+  columns: any[];
+  preview_data: any[];
+  file_path: string;
+}
+
 const TestFileUploadPage: React.FC = () => {
   const [activeStep, setActiveStep] = useState(0);
   const [uploadedFile, setUploadedFile] = useState<UploadedFile | null>(null);
+  const [realDataset, setRealDataset] = useState<RealDatasetInfo | null>(null);
   const [dataValidation, setDataValidation] = useState<DataValidation | null>(null);
   const [trainingConfig, setTrainingConfig] = useState<TrainingConfiguration | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
   const steps = ['Upload File', 'Preview Data', 'Configure Training', 'Ready to Train'];
 
-  const handleFileUploaded = (file: UploadedFile) => {
+  const handleFileUploaded = async (file: UploadedFile) => {
     console.log('✅ File uploaded:', file);
     setUploadedFile(file);
-    // Auto advance to next step when file is uploaded successfully
-    if (file.status === 'completed') {
-      setActiveStep(1);
+    setLoading(true);
+    setError(null);
+
+    try {
+      // Call real backend API
+      const formData = new FormData();
+      formData.append('file', file.file);
+
+      const response = await fetch(`http://localhost:8000/upload/file/test-project-123`, {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${localStorage.getItem('access_token')}`,
+        },
+        body: formData,
+      });
+
+      if (!response.ok) {
+        const errorData = await response.json();
+        throw new Error(errorData.detail || 'Upload failed');
+      }
+
+      const datasetInfo: RealDatasetInfo = await response.json();
+      console.log('📊 Real dataset info:', datasetInfo);
+      
+      setRealDataset(datasetInfo);
+      setActiveStep(1); // Auto advance to preview
+      
+    } catch (err: any) {
+      console.error('Upload error:', err);
+      setError(err.message || 'Failed to process file');
+    } finally {
+      setLoading(false);
     }
   };
 
   const handleDataValidated = (validation: DataValidation) => {
     console.log('✅ Data validated:', validation);
     setDataValidation(validation);
-    // Auto advance if data is valid
     if (validation.isValid) {
       setActiveStep(2);
     }
@@ -44,29 +92,64 @@ const TestFileUploadPage: React.FC = () => {
     console.log('✅ Config updated:', config);
     setTrainingConfig(config);
     
-    // Check if configuration is valid for training
     if (config.targetColumn && config.featureColumns.length > 0) {
       setActiveStep(3);
-    }
-  };
-
-  const handleContinueToPreview = () => {
-    if (uploadedFile && uploadedFile.status === 'completed') {
-      setActiveStep(1);
-    }
-  };
-
-  const handleContinueToConfig = () => {
-    if (dataValidation && dataValidation.isValid) {
-      setActiveStep(2);
     }
   };
 
   const resetFlow = () => {
     setActiveStep(0);
     setUploadedFile(null);
+    setRealDataset(null);
     setDataValidation(null);
     setTrainingConfig(null);
+    setError(null);
+  };
+
+  const loadDatasetPreview = async (datasetId: string, rows: number = 10, page: number = 1) => {
+    try {
+      const response = await fetch(
+        `http://localhost:8000/upload/dataset/${datasetId}/preview?rows=${rows}&page=${page}`,
+        {
+          headers: {
+            'Authorization': `Bearer ${localStorage.getItem('access_token')}`,
+          },
+        }
+      );
+
+      if (!response.ok) {
+        throw new Error('Failed to load preview');
+      }
+
+      return await response.json();
+    } catch (err: any) {
+      console.error('Preview error:', err);
+      setError(err.message);
+      return null;
+    }
+  };
+
+  const loadDatasetColumns = async (datasetId: string) => {
+    try {
+      const response = await fetch(
+        `http://localhost:8000/upload/dataset/${datasetId}/columns`,
+        {
+          headers: {
+            'Authorization': `Bearer ${localStorage.getItem('access_token')}`,
+          },
+        }
+      );
+
+      if (!response.ok) {
+        throw new Error('Failed to load columns');
+      }
+
+      return await response.json();
+    } catch (err: any) {
+      console.error('Columns error:', err);
+      setError(err.message);
+      return null;
+    }
   };
 
   return (
@@ -74,18 +157,36 @@ const TestFileUploadPage: React.FC = () => {
       {/* Header */}
       <Paper sx={{ p: 3, mb: 4 }}>
         <Typography variant="h3" gutterBottom align="center">
-          🧪 Phase 3 Testing - File Upload System
+          🧪 Phase 4 Testing - Real Data Upload System
         </Typography>
         <Typography variant="h6" align="center" color="text.secondary">
-          Complete workflow testing: Upload → Preview → Configure → Train
+          Complete workflow: Upload → Real Preview → Configure → Train
         </Typography>
         
         <Box sx={{ display: 'flex', justifyContent: 'center', gap: 2, mt: 2 }}>
-          <Chip label="Backend ✅" color="success" />
-          <Chip label="Frontend Components 🧪" color="warning" />
-          <Chip label="Integration Flow 🔗" color="info" />
+          <Chip label="Backend Real API ✅" color="success" />
+          <Chip label="File Processing 🔄" color="warning" />
+          <Chip label="Real Data Preview 🧪" color="info" />
         </Box>
       </Paper>
+
+      {/* Global Error Display */}
+      {error && (
+        <Alert severity="error" sx={{ mb: 3 }} onClose={() => setError(null)}>
+          <strong>Error:</strong> {error}
+        </Alert>
+      )}
+
+      {/* Global Loading */}
+      {loading && (
+        <Paper sx={{ p: 3, mb: 4, textAlign: 'center' }}>
+          <CircularProgress sx={{ mb: 2 }} />
+          <Typography variant="h6">Processing your file...</Typography>
+          <Typography variant="body2" color="text.secondary">
+            This may take a few moments for large files
+          </Typography>
+        </Paper>
+      )}
 
       {/* Progress Stepper */}
       <Paper sx={{ p: 3, mb: 4 }}>
@@ -111,10 +212,10 @@ const TestFileUploadPage: React.FC = () => {
       <Box sx={{ mb: 4 }}>
         <Paper sx={{ p: 3 }}>
           <Typography variant="h5" gutterBottom>
-            Step 1: File Upload Testing
+            Step 1: Real File Upload Testing
           </Typography>
           <Typography variant="body2" color="text.secondary" sx={{ mb: 3 }}>
-            Test drag & drop, file validation, progress tracking
+            Upload CSV/Excel files - backend will process and return real preview data
           </Typography>
           
           <FileUploader
@@ -124,45 +225,78 @@ const TestFileUploadPage: React.FC = () => {
               console.log('🗑️ File removed:', fileId);
               if (uploadedFile?.id === fileId) {
                 setUploadedFile(null);
+                setRealDataset(null);
                 setActiveStep(0);
               }
             }}
             maxFileSize={50}
-            maxFiles={3}
+            maxFiles={1}
           />
+
+          {/* Real Dataset Info Display */}
+          {realDataset && (
+            <Paper sx={{ p: 2, mt: 3, bgcolor: 'success.light', color: 'success.contrastText' }}>
+              <Typography variant="h6" gutterBottom>
+                ✅ File Processed Successfully!
+              </Typography>
+              <Box sx={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))', gap: 2 }}>
+                <Box>
+                  <Typography variant="body2">Filename</Typography>
+                  <Typography variant="h6">{realDataset.filename}</Typography>
+                </Box>
+                <Box>
+                  <Typography variant="body2">Rows</Typography>
+                  <Typography variant="h6">{realDataset.rows_count.toLocaleString()}</Typography>
+                </Box>
+                <Box>
+                  <Typography variant="body2">Columns</Typography>
+                  <Typography variant="h6">{realDataset.columns_count}</Typography>
+                </Box>
+                <Box>
+                  <Typography variant="body2">File Size</Typography>
+                  <Typography variant="h6">{(realDataset.file_size / 1024 / 1024).toFixed(2)} MB</Typography>
+                </Box>
+              </Box>
+            </Paper>
+          )}
         </Paper>
       </Box>
 
-      {/* Step 2: Data Preview */}
-      {activeStep >= 1 && uploadedFile && (
+      {/* Step 2: Real Data Preview */}
+      {activeStep >= 1 && realDataset && (
         <Box sx={{ mb: 4 }}>
           <Paper sx={{ p: 3 }}>
             <Typography variant="h5" gutterBottom>
-              Step 2: Data Preview Testing
+              Step 2: Real Data Preview Testing
             </Typography>
             <Typography variant="body2" color="text.secondary" sx={{ mb: 3 }}>
-              Test data quality assessment, column analysis, preview table
+              Preview your actual uploaded data with pagination and column analysis
             </Typography>
             
             <DataPreview
-              fileId={uploadedFile.id}
-              fileName={uploadedFile.name}
+              fileId={realDataset.dataset_id}
+              fileName={realDataset.filename}
+              initialData={realDataset.preview_data}
+              initialColumns={realDataset.columns}
+              totalRows={realDataset.rows_count}
               onDataValidated={handleDataValidated}
               onColumnConfigured={(config) => {
                 console.log('📊 Column config from preview:', config);
               }}
+              loadPreview={loadDatasetPreview}
+              loadColumns={loadDatasetColumns}
             />
             
-            {/* Manual Continue Button for Testing */}
+            {/* Manual Continue Button */}
             {dataValidation && dataValidation.isValid && activeStep === 1 && (
               <Box sx={{ mt: 2, textAlign: 'center' }}>
                 <Button
                   variant="contained"
                   color="secondary"
-                  onClick={handleContinueToConfig}
+                  onClick={() => setActiveStep(2)}
                   size="large"
                 >
-                  🔄 Force Continue to Configuration
+                  🔄 Continue to Configuration
                 </Button>
               </Box>
             )}
@@ -171,58 +305,26 @@ const TestFileUploadPage: React.FC = () => {
       )}
 
       {/* Step 3: Column Configuration */}
-      {activeStep >= 2 && dataValidation?.isValid && (
+      {activeStep >= 2 && realDataset && dataValidation?.isValid && (
         <Box sx={{ mb: 4 }}>
           <Paper sx={{ p: 3 }}>
             <Typography variant="h5" gutterBottom>
-              Step 3: Training Configuration Testing
+              Step 3: Real Training Configuration
             </Typography>
             <Typography variant="body2" color="text.secondary" sx={{ mb: 3 }}>
-              Test target/feature selection, preprocessing options, model settings
+              Configure your ML training with real column data and recommendations
             </Typography>
             
             <ColumnMapper
-              columns={[
-                // Mock realistic OSS data columns
-                { 
-                  name: 'id', 
-                  type: 'number', 
-                  uniqueCount: 100, 
-                  nullCount: 0, 
-                  sampleValues: [1, 2, 3, 4, 5],
-                  isRecommendedFeature: false 
-                },
-                { 
-                  name: 'text', 
-                  type: 'text', 
-                  uniqueCount: 95, 
-                  nullCount: 2, 
-                  sampleValues: ['Saya ingin mengurus SBU konstruksi', 'Kenapa NIB saya belum keluar?'],
-                  isRecommendedFeature: true 
-                },
-                { 
-                  name: 'category', 
-                  type: 'text', 
-                  uniqueCount: 2, 
-                  nullCount: 0, 
-                  sampleValues: ['layanan', 'pengaduan'],
-                  isRecommendedTarget: true 
-                },
-                { 
-                  name: 'confidence', 
-                  type: 'number', 
-                  uniqueCount: 80, 
-                  nullCount: 0, 
-                  sampleValues: [0.95, 0.87, 0.92]
-                },
-                { 
-                  name: 'timestamp', 
-                  type: 'date', 
-                  uniqueCount: 100, 
-                  nullCount: 0, 
-                  sampleValues: ['2024-01-01', '2024-01-02']
-                }
-              ]}
+              columns={realDataset.columns.map(col => ({
+                name: col.name,
+                type: col.type,
+                uniqueCount: col.unique_count,
+                nullCount: col.null_count,
+                sampleValues: col.sample_values,
+                isRecommendedTarget: col.is_recommended_target || false,
+                isRecommendedFeature: col.is_recommended_feature || false,
+              }))}
               onConfigurationChange={handleConfigurationChange}
               onValidationChange={(validation) => {
                 console.log('✅ Config validation:', validation);
@@ -233,25 +335,33 @@ const TestFileUploadPage: React.FC = () => {
       )}
 
       {/* Step 4: Ready to Train */}
-      {activeStep >= 3 && trainingConfig && (
+      {activeStep >= 3 && trainingConfig && realDataset && (
         <Box sx={{ mb: 4 }}>
           <Paper sx={{ p: 3 }}>
             <Typography variant="h5" gutterBottom>
-              Step 4: Training Ready! 🎉
+              Step 4: Ready for Real ML Training! 🎉
             </Typography>
             
             <Alert severity="success" sx={{ mb: 3 }}>
               <Typography variant="h6" gutterBottom>
-                ✅ Configuration Complete!
+                ✅ Real Data Configuration Complete!
               </Typography>
               <Typography variant="body2">
-                All components working correctly. Ready for Phase 4 integration.
+                Your actual uploaded file is processed and ready for ML training.
               </Typography>
             </Alert>
 
+            {/* Real Data Summary */}
             <Box sx={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: 2, mb: 3 }}>
               <Paper sx={{ p: 2, textAlign: 'center' }}>
                 <Typography variant="h6" color="primary">
+                  {realDataset.filename}
+                </Typography>
+                <Typography variant="caption">Source File</Typography>
+              </Paper>
+              
+              <Paper sx={{ p: 2, textAlign: 'center' }}>
+                <Typography variant="h6" color="error">
                   {trainingConfig.targetColumn || 'None'}
                 </Typography>
                 <Typography variant="caption">Target Column</Typography>
@@ -266,13 +376,20 @@ const TestFileUploadPage: React.FC = () => {
               
               <Paper sx={{ p: 2, textAlign: 'center' }}>
                 <Typography variant="h6" color="info.main">
+                  {realDataset.rows_count.toLocaleString()}
+                </Typography>
+                <Typography variant="caption">Training Rows</Typography>
+              </Paper>
+              
+              <Paper sx={{ p: 2, textAlign: 'center' }}>
+                <Typography variant="h6" color="warning.main">
                   {Math.round((1 - trainingConfig.modelSettings.testSize) * 100)}% / {Math.round(trainingConfig.modelSettings.testSize * 100)}%
                 </Typography>
                 <Typography variant="caption">Train / Test Split</Typography>
               </Paper>
               
               <Paper sx={{ p: 2, textAlign: 'center' }}>
-                <Typography variant="h6" color="warning.main">
+                <Typography variant="h6" color="success.main">
                   {trainingConfig.modelSettings.algorithm === 'auto' ? 'Auto' : trainingConfig.modelSettings.algorithm}
                 </Typography>
                 <Typography variant="caption">Algorithm</Typography>
@@ -284,16 +401,16 @@ const TestFileUploadPage: React.FC = () => {
               size="large" 
               fullWidth
               onClick={() => {
-                alert('🚀 Ready for Phase 4: ML Training Engine!\n\nNext: Integrate with OSS classification system (83.3% accuracy)');
+                alert(`🚀 Ready for ML Training!\n\nFile: ${realDataset.filename}\nRows: ${realDataset.rows_count}\nTarget: ${trainingConfig.targetColumn}\nFeatures: ${trainingConfig.featureColumns.length}\n\nNext: Integrate with OSS classification system!`);
               }}
             >
-              Start ML Training (Phase 4)
+              Start Real ML Training (Phase 4 Complete!)
             </Button>
           </Paper>
         </Box>
       )}
 
-      {/* Control Panel */}
+      {/* Enhanced Control Panel */}
       <Paper sx={{ p: 3 }}>
         <Typography variant="h6" gutterBottom>🎮 Test Controls</Typography>
         <Box sx={{ display: 'flex', gap: 2, flexWrap: 'wrap' }}>
@@ -302,7 +419,7 @@ const TestFileUploadPage: React.FC = () => {
           </Button>
           <Button 
             variant="outlined" 
-            onClick={() => console.log({uploadedFile, dataValidation, trainingConfig})}
+            onClick={() => console.log({uploadedFile, realDataset, dataValidation, trainingConfig})}
           >
             🔍 Log Debug Info
           </Button>
@@ -323,10 +440,10 @@ const TestFileUploadPage: React.FC = () => {
         </Box>
       </Paper>
 
-      {/* Debug Info */}
+      {/* Enhanced Debug Info */}
       <Paper sx={{ p: 3, mt: 3, bgcolor: 'grey.50' }}>
         <Typography variant="h6" gutterBottom>🔍 Debug Information</Typography>
-        <pre style={{ fontSize: '12px', overflow: 'auto', maxHeight: '200px' }}>
+        <pre style={{ fontSize: '12px', overflow: 'auto', maxHeight: '300px' }}>
           {JSON.stringify({
             currentStep: activeStep,
             uploadedFile: uploadedFile ? {
@@ -334,6 +451,15 @@ const TestFileUploadPage: React.FC = () => {
               name: uploadedFile.name,
               status: uploadedFile.status,
               hasPreview: !!uploadedFile.preview
+            } : null,
+            realDataset: realDataset ? {
+              dataset_id: realDataset.dataset_id,
+              filename: realDataset.filename,
+              rows_count: realDataset.rows_count,
+              columns_count: realDataset.columns_count,
+              upload_status: realDataset.upload_status,
+              preview_data_length: realDataset.preview_data.length,
+              columns_sample: realDataset.columns.slice(0, 2)
             } : null,
             dataValidation: dataValidation ? {
               isValid: dataValidation.isValid,
