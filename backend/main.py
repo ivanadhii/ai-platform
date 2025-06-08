@@ -1,26 +1,22 @@
-# backend/main.py - Complete version with all upload endpoints
-
-from fastapi import FastAPI, Depends, UploadFile, File, HTTPException
+from fastapi import FastAPI, Depends, HTTPException, BackgroundTasks
 from fastapi.middleware.cors import CORSMiddleware
 from contextlib import asynccontextmanager
 from pydantic import BaseModel
+from typing import Dict, Any, List, Optional
 import uuid
-import os
-import pandas as pd
-from pathlib import Path
-import json
 from datetime import datetime
-import traceback
 
+# Import existing modules
 from app.core.auth import auth_backend, fastapi_users, current_active_user
 from app.schemas.user import UserCreate, UserRead, UserUpdate
 from app.models.user import User
 from app.core.database import async_engine, Base
+from frontend_test_endpoints import router as test_router
 
-# Create upload directory
-UPLOAD_DIR = Path("uploaded_files")
-UPLOAD_DIR.mkdir(exist_ok=True)
+# Import Celery
+from celery_app import app as celery_app, mock_training_task, test_task
 
+# Create tables on startup
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     try:
@@ -29,8 +25,10 @@ async def lifespan(app: FastAPI):
         print("✅ Database tables created successfully")
     except Exception as e:
         print(f"❌ Database startup error: {e}")
+        print("🔧 Continuing with limited functionality...")
     yield
 
+# Initialize FastAPI app
 app = FastAPI(
     title="AI Platform API",
     description="No-code ML training platform API",
@@ -38,6 +36,7 @@ app = FastAPI(
     lifespan=lifespan
 )
 
+# CORS middleware
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["http://localhost:3000", "http://127.0.0.1:3000"],
@@ -46,7 +45,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Authentication routes
+# Include authentication routes
 app.include_router(
     fastapi_users.get_auth_router(auth_backend), 
     prefix="/auth/jwt", 
@@ -63,267 +62,342 @@ app.include_router(
     tags=["users"],
 )
 
-# ===== UPLOAD ENDPOINTS =====
+app.include_router(test_router)
 
-@app.post("/upload/file/{project_id}")
-async def upload_file(
-    project_id: str,
-    file: UploadFile = File(...),
+# ==========================================
+# TRAINING API ENDPOINTS WITH CELERY
+# ==========================================
+
+class TrainingRequest(BaseModel):
+    project_id: str
+    dataset_id: str
+    target_column: str
+    feature_columns: List[str]
+    algorithm: str = "ensemble"
+    test_size: float = 0.2
+
+class TrainingResponse(BaseModel):
+    job_id: str
+    status: str
+    message: str
+
+class TrainingStatus(BaseModel):
+    job_id: str
+    state: str
+    progress: int
+    status: str
+    result: Optional[Dict[str, Any]] = None
+
+@app.post("/training/start", response_model=TrainingResponse)
+async def start_training(
+    request: TrainingRequest,
     current_user: User = Depends(current_active_user)
 ):
-    """Upload and process file"""
+    """Start ML model training using Celery"""
     
-    print(f"🔥 Upload called: {file.filename}")
+    # Generate job ID
+    job_id = str(uuid.uuid4())
     
-    if not file.filename:
-        raise HTTPException(status_code=400, detail="No file provided")
+    # Prepare training config
+    config = {
+        'project_id': request.project_id,
+        'dataset_id': request.dataset_id,
+        'target_column': request.target_column,
+        'feature_columns': request.feature_columns,
+        'algorithm': request.algorithm,
+        'test_size': request.test_size,
+        'user_id': str(current_user.id)
+    }
     
-    file_extension = Path(file.filename).suffix.lower()
-    if file_extension not in {'.csv', '.xlsx', '.xls'}:
-        raise HTTPException(status_code=400, detail="File type not supported")
+    # Start Celery task
+    task = mock_training_task.delay(job_id, config)
     
-    content = await file.read()
-    if len(content) > 50 * 1024 * 1024:
-        raise HTTPException(status_code=400, detail="File too large")
-    
-    try:
-        # Save file
-        file_id = str(uuid.uuid4())
-        filename = f"{file_id}_{file.filename}"
-        file_path = UPLOAD_DIR / filename
-        
-        with open(file_path, 'wb') as f:
-            f.write(content)
-        
-        # Process file
-        if file_extension == '.csv':
-            df = pd.read_csv(file_path, nrows=100)
-        else:
-            df = pd.read_excel(file_path, nrows=100)
-        
-        # Basic info
-        rows_count = len(df)
-        columns_count = len(df.columns)
-        
-        # Process columns
-        columns_info = []
-        for col in df.columns:
-            col_data = df[col]
-            null_count = int(col_data.isnull().sum())
-            unique_count = int(col_data.nunique())
-            
-            if pd.api.types.is_numeric_dtype(col_data):
-                col_type = 'number'
-            else:
-                col_type = 'text'
-            
-            sample_values = [str(val)[:50] for val in col_data.dropna().head(3).tolist()]
-            
-            columns_info.append({
-                'name': str(col),
-                'type': col_type,
-                'data_type': str(col_data.dtype),
-                'null_count': null_count,
-                'unique_count': unique_count,
-                'total_count': rows_count,
-                'null_percentage': round((null_count / rows_count) * 100, 2),
-                'sample_values': sample_values,
-                'data_quality': 'good' if null_count < rows_count * 0.1 else 'fair',
-                'is_recommended_target': col_type == 'text' and 2 <= unique_count <= 10,
-                'is_recommended_feature': unique_count > 1 and null_count < rows_count * 0.5,
-            })
-        
-        # Preview data
-        preview_data = []
-        for _, row in df.head(5).iterrows():
-            row_dict = {}
-            for col in df.columns:
-                val = row[col]
-                if pd.isna(val):
-                    row_dict[str(col)] = None
-                else:
-                    row_dict[str(col)] = str(val)[:100]
-            preview_data.append(row_dict)
-        
-        response_data = {
-            "dataset_id": file_id,
-            "filename": file.filename,
-            "file_size": len(content),
-            "rows_count": rows_count,
-            "columns_count": columns_count,
-            "upload_status": "completed",
-            "uploaded_at": datetime.utcnow().isoformat(),
-            "columns": columns_info,
-            "preview_data": preview_data,
-            "file_path": str(file_path)
-        }
-        
-        print(f"✅ Upload success: {rows_count} rows, {columns_count} cols")
-        return response_data
-        
-    except Exception as e:
-        print(f"❌ Upload error: {e}")
-        if 'file_path' in locals() and file_path.exists():
-            file_path.unlink()
-        raise HTTPException(status_code=500, detail=f"Processing failed: {str(e)}")
+    return TrainingResponse(
+        job_id=task.id,  # Use Celery task ID
+        status="started",
+        message=f"Training started for project {request.project_id}"
+    )
 
-@app.get("/upload/dataset/{dataset_id}/preview")
-async def get_dataset_preview(
-    dataset_id: str,
-    rows: int = 10,
-    page: int = 1,
+@app.get("/training/{job_id}/status", response_model=TrainingStatus)
+async def get_training_status(
+    job_id: str,
     current_user: User = Depends(current_active_user)
 ):
-    """Get dataset preview with pagination"""
+    """Get real-time training status"""
     
-    print(f"📊 Preview called: {dataset_id}, page {page}, {rows} rows")
+    # Get task result
+    from celery.result import AsyncResult
+    task_result = AsyncResult(job_id, app=celery_app)
     
-    try:
-        # Find file
-        file_pattern = f"{dataset_id}_*"
-        matching_files = list(UPLOAD_DIR.glob(file_pattern))
-        
-        if not matching_files:
-            print(f"❌ File not found: {file_pattern}")
-            print(f"📁 Available files: {[f.name for f in UPLOAD_DIR.glob('*')]}")
-            raise HTTPException(status_code=404, detail="Dataset not found")
-        
-        file_path = matching_files[0]
-        file_extension = file_path.suffix.lower()
-        
-        # Read file
-        if file_extension == '.csv':
-            df = pd.read_csv(file_path)
-        else:
-            df = pd.read_excel(file_path)
-        
-        # Pagination
-        total_rows = len(df)
-        start_idx = (page - 1) * rows
-        end_idx = start_idx + rows
-        
-        page_data = df.iloc[start_idx:end_idx] if start_idx < total_rows else pd.DataFrame()
-        
-        # Convert to dict
-        cleaned_data = []
-        for _, row in page_data.iterrows():
-            row_dict = {}
-            for col in df.columns:
-                val = row[col]
-                if pd.isna(val):
-                    row_dict[str(col)] = None
-                else:
-                    row_dict[str(col)] = str(val)[:200]
-            cleaned_data.append(row_dict)
-        
-        total_pages = (total_rows + rows - 1) // rows
-        
+    # Parse task state and progress
+    state = task_result.state
+    
+    if state == 'PENDING':
         response = {
-            "data": cleaned_data,
-            "columns": [str(col) for col in df.columns],
-            "rows_shown": len(cleaned_data),
-            "total_rows": total_rows,
-            "current_page": page,
-            "rows_per_page": rows,
-            "total_pages": total_pages,
-            "has_next": end_idx < total_rows,
-            "has_previous": page > 1
+            'job_id': job_id,
+            'state': state,
+            'progress': 0,
+            'status': 'Task is waiting to be processed...',
         }
-        
-        print(f"✅ Preview success: {len(cleaned_data)} rows returned")
-        return response
-        
-    except Exception as e:
-        print(f"❌ Preview error: {e}")
-        raise HTTPException(status_code=500, detail=f"Preview failed: {str(e)}")
+    elif state == 'PROGRESS':
+        info = task_result.info
+        response = {
+            'job_id': job_id,
+            'state': state,
+            'progress': info.get('progress', 0),
+            'status': info.get('status', 'Processing...'),
+        }
+    elif state == 'SUCCESS':
+        result = task_result.result
+        response = {
+            'job_id': job_id,
+            'state': state,
+            'progress': 100,
+            'status': 'Training completed successfully!',
+            'result': result
+        }
+    else:  # FAILURE
+        response = {
+            'job_id': job_id,
+            'state': state,
+            'progress': 0,
+            'status': f'Training failed: {str(task_result.info)}',
+        }
+    
+    return TrainingStatus(**response)
 
-@app.get("/upload/dataset/{dataset_id}/columns")
-async def get_dataset_columns(
-    dataset_id: str,
+@app.get("/training/{job_id}/results")
+async def get_training_results(
+    job_id: str,
     current_user: User = Depends(current_active_user)
 ):
-    """Get column information"""
+    """Get detailed training results"""
+    
+    from celery.result import AsyncResult
+    task_result = AsyncResult(job_id, app=celery_app)
+    
+    if task_result.state != 'SUCCESS':
+        raise HTTPException(
+            status_code=400, 
+            detail=f"Training not completed. Current state: {task_result.state}"
+        )
+    
+    return {
+        'job_id': job_id,
+        'status': 'completed',
+        'results': task_result.result,
+        'task_info': {
+            'state': task_result.state,
+            'task_id': task_result.id,
+            'date_done': str(task_result.date_done) if task_result.date_done else None
+        }
+    }
+
+# ==========================================
+# MODEL DEPLOYMENT ENDPOINTS
+# ==========================================
+
+class DeploymentRequest(BaseModel):
+    model_name: str
+    description: Optional[str] = None
+
+@app.post("/training/{job_id}/deploy")
+async def deploy_model(
+    job_id: str,
+    request: DeploymentRequest,
+    current_user: User = Depends(current_active_user)
+):
+    """Deploy trained model as API endpoint"""
+    
+    from celery.result import AsyncResult
+    task_result = AsyncResult(job_id, app=celery_app)
+    
+    if task_result.state != 'SUCCESS':
+        raise HTTPException(
+            status_code=400,
+            detail="Cannot deploy model - training not completed"
+        )
+    
+    training_results = task_result.result
+    model_id = str(uuid.uuid4())
+    
+    # Store deployment info (in real app, save to database)
+    deployment_info = {
+        'model_id': model_id,
+        'model_name': request.model_name,
+        'training_job_id': job_id,
+        'model_path': training_results.get('model_path'),
+        'accuracy': training_results.get('accuracy'),
+        'deployed_at': datetime.utcnow().isoformat(),
+        'api_endpoint': f'/models/{model_id}/predict',
+        'status': 'deployed'
+    }
+    
+    return {
+        'model_id': model_id,
+        'message': f"Model '{request.model_name}' deployed successfully!",
+        'api_endpoint': f'/models/{model_id}/predict',
+        'deployment_info': deployment_info
+    }
+
+# ==========================================
+# MODEL INFERENCE ENDPOINTS (inference_router equivalent)
+# ==========================================
+
+class PredictionRequest(BaseModel):
+    text: str
+
+class PredictionResponse(BaseModel):
+    prediction: str
+    confidence: float
+    model_id: str
+    processing_time_ms: float
+
+@app.post("/models/{model_id}/predict", response_model=PredictionResponse)
+async def predict_with_model(
+    model_id: str,
+    request: PredictionRequest
+):
+    """Make prediction using deployed model"""
+    
+    import time
+    import random
+    
+    start_time = time.time()
+    
+    # Mock prediction logic (replace with real model loading)
+    text = request.text.lower()
+    
+    # Simple rule-based mock prediction
+    if any(word in text for word in ['sbu', 'kbli', 'npwp', 'siup', 'izin', 'mengurus']):
+        prediction = "layanan"
+        confidence = 0.85 + random.random() * 0.10
+    else:
+        prediction = "pengaduan"
+        confidence = 0.80 + random.random() * 0.15
+    
+    processing_time = (time.time() - start_time) * 1000
+    
+    return PredictionResponse(
+        prediction=prediction,
+        confidence=confidence,
+        model_id=model_id,
+        processing_time_ms=processing_time
+    )
+
+@app.get("/models/{model_id}/info")
+async def get_model_info(model_id: str):
+    """Get model information and metrics"""
+    
+    # Mock model info (in real app, fetch from database)
+    return {
+        'model_id': model_id,
+        'name': 'OSS Text Classifier',
+        'algorithm': 'Ensemble (Logistic + SVM + Naive Bayes)',
+        'accuracy': 0.847,
+        'precision': 0.85,
+        'recall': 0.82,
+        'f1_score': 0.83,
+        'training_data_size': 386,
+        'features': ['text'],
+        'classes': ['layanan', 'pengaduan'],
+        'deployed_at': '2025-06-08T19:31:35Z',
+        'api_calls_count': 156,
+        'avg_response_time_ms': 45.7
+    }
+
+# ==========================================
+# WORKER STATUS & SYSTEM HEALTH
+# ==========================================
+
+@app.get("/training/worker-status")
+async def get_worker_status():
+    """Check Celery worker status"""
     
     try:
-        file_pattern = f"{dataset_id}_*"
-        matching_files = list(UPLOAD_DIR.glob(file_pattern))
+        # Check active workers
+        inspect = celery_app.control.inspect()
+        active_workers = inspect.active()
+        stats = inspect.stats()
         
-        if not matching_files:
-            raise HTTPException(status_code=404, detail="Dataset not found")
-        
-        file_path = matching_files[0]
-        file_extension = file_path.suffix.lower()
-        
-        if file_extension == '.csv':
-            df = pd.read_csv(file_path, nrows=1000)
+        if active_workers:
+            return {
+                'status': 'healthy',
+                'workers': len(active_workers),
+                'worker_names': list(active_workers.keys()),
+                'active_tasks': sum(len(tasks) for tasks in active_workers.values()),
+                'stats': stats
+            }
         else:
-            df = pd.read_excel(file_path, nrows=1000)
-        
-        columns_info = []
-        for col in df.columns:
-            col_data = df[col]
-            columns_info.append({
-                'name': str(col),
-                'type': 'number' if pd.api.types.is_numeric_dtype(col_data) else 'text',
-                'null_count': int(col_data.isnull().sum()),
-                'unique_count': int(col_data.nunique()),
-                'sample_values': [str(val)[:50] for val in col_data.dropna().head(5).tolist()]
-            })
-        
-        return columns_info
-        
+            return {
+                'status': 'no_workers',
+                'workers': 0,
+                'message': 'No active Celery workers found'
+            }
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Column analysis failed: {str(e)}")
+        return {
+            'status': 'error',
+            'error': str(e),
+            'message': 'Failed to connect to Celery workers'
+        }
 
-@app.delete("/upload/dataset/{dataset_id}")
-async def delete_dataset(
-    dataset_id: str,
-    current_user: User = Depends(current_active_user)
-):
-    """Delete dataset"""
+@app.post("/training/test")
+async def test_training_system():
+    """Test the training system with a simple task"""
     
-    try:
-        file_pattern = f"{dataset_id}_*"
-        matching_files = list(UPLOAD_DIR.glob(file_pattern))
-        
-        deleted_count = 0
-        for file_path in matching_files:
-            file_path.unlink()
-            deleted_count += 1
-        
-        if deleted_count == 0:
-            raise HTTPException(status_code=404, detail="Dataset not found")
-        
-        return {"message": f"Dataset deleted ({deleted_count} files)"}
-        
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Delete failed: {str(e)}")
+    # Send test task
+    task = test_task.delay("API test message")
+    
+    return {
+        'test_task_id': task.id,
+        'message': 'Test task sent to Celery worker',
+        'check_status_url': f'/training/{task.id}/status'
+    }
 
-# ===== EXISTING ENDPOINTS =====
+# ==========================================
+# EXISTING ENDPOINTS (keep these)
+# ==========================================
 
 @app.get("/")
 async def root():
     return {
-        "message": "AI Platform API - Complete Upload System",
+        "message": "AI Platform API",
         "version": "1.0.0",
         "status": "active",
-        "endpoints": {
-            "upload": "POST /upload/file/{project_id} ✅",
-            "preview": "GET /upload/dataset/{dataset_id}/preview ✅",
-            "columns": "GET /upload/dataset/{dataset_id}/columns ✅",
-            "delete": "DELETE /upload/dataset/{dataset_id} ✅"
-        },
-        "upload_dir_exists": UPLOAD_DIR.exists()
+        "features": ["Authentication", "ML Training", "Model Deployment"]
     }
 
 @app.get("/health")
 async def health_check():
-    return {"status": "healthy", "upload_endpoints": "available"}
+    return {"status": "healthy", "message": "API server is running"}
 
 @app.get("/protected")
 async def protected_endpoint(user: User = Depends(current_active_user)):
     return {
         "message": f"Hello {user.email}!",
         "user_id": str(user.id),
-        "subscription": user.subscription_plan
+        "subscription": user.subscription_plan,
+        "models_created": user.models_created,
+        "full_name": user.full_name,
     }
+
+@app.get("/test-db")
+async def test_database():
+    try:
+        from app.core.database import async_engine
+        from sqlalchemy import text
+        async with async_engine.begin() as conn:
+            result = await conn.execute(text("SELECT version()"))
+            version = result.fetchone()
+            return {
+                "database": "connected",
+                "type": "PostgreSQL", 
+                "version": str(version[0]) if version else "unknown",
+                "status": "✅ Working perfectly"
+            }
+    except Exception as e:
+        return {
+            "database": "error", 
+            "message": str(e),
+            "status": "❌ Connection failed"
+        }

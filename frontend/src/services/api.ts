@@ -1,5 +1,3 @@
-// frontend/src/services/api.ts - Updated with Real Upload Endpoints
-
 import axios, { AxiosInstance, AxiosResponse } from 'axios';
 
 // API Configuration
@@ -45,7 +43,10 @@ apiClient.interceptors.response.use(
 
 // API Service Class
 export class ApiService {
-  // Authentication endpoints
+  // ==========================================
+  // AUTHENTICATION ENDPOINTS
+  // ==========================================
+  
   static async register(userData: {
     email: string;
     password: string;
@@ -91,7 +92,10 @@ export class ApiService {
     return response.data;
   }
 
-  // Project management endpoints
+  // ==========================================
+  // PROJECT MANAGEMENT ENDPOINTS
+  // ==========================================
+  
   static async getProjects() {
     const response = await apiClient.get('/projects');
     return response.data;
@@ -116,7 +120,9 @@ export class ApiService {
     return response.data;
   }
 
-  // ===== ENHANCED FILE UPLOAD ENDPOINTS =====
+  // ==========================================
+  // FILE UPLOAD ENDPOINTS
+  // ==========================================
   
   static async uploadFile(file: File, projectId: string, onProgress?: (progress: number) => void) {
     const formData = new FormData();
@@ -176,36 +182,106 @@ export class ApiService {
     return response.data;
   }
 
-  // ===== TRAINING ENDPOINTS (for Phase 4) =====
+  // ==========================================
+  // 🚀 NEW: ML TRAINING ENDPOINTS (Phase 5)
+  // ==========================================
   
-  static async startTraining(trainingConfig: {
+  /**
+   * Start ML model training with configuration
+   */
+  static async startTraining(config: {
+    project_id: string;
     dataset_id: string;
     target_column: string;
     feature_columns: string[];
-    test_size: number;
     algorithm?: string;
-    preprocessing?: any;
+    test_size?: number;
+    preprocessing_config?: any;
   }) {
-    const response = await apiClient.post('/train/start', trainingConfig);
+    const response = await apiClient.post('/training/start', config);
     return response.data;
   }
 
+  /**
+   * Get real-time training job status
+   */
   static async getTrainingStatus(jobId: string) {
-    const response = await apiClient.get(`/train/job/${jobId}/status`);
+    const response = await apiClient.get(`/training/${jobId}/status`);
     return response.data;
   }
 
+  /**
+   * Get detailed training results after completion
+   */
   static async getTrainingResults(jobId: string) {
-    const response = await apiClient.get(`/train/job/${jobId}/results`);
+    const response = await apiClient.get(`/training/${jobId}/results`);
     return response.data;
   }
 
-  static async getTrainingLogs(jobId: string) {
-    const response = await apiClient.get(`/train/job/${jobId}/logs`);
+  /**
+   * Deploy trained model as API endpoint
+   */
+  static async deployModel(jobId: string, modelName: string) {
+    const response = await apiClient.post(`/training/${jobId}/deploy`, {
+      model_name: modelName
+    });
     return response.data;
   }
 
-  // ===== MODEL MANAGEMENT ENDPOINTS =====
+  /**
+   * Check Celery worker status
+   */
+  static async getWorkerStatus() {
+    const response = await apiClient.get('/training/worker-status');
+    return response.data;
+  }
+
+  // ==========================================
+  // 🎯 NEW: MODEL INFERENCE ENDPOINTS (Phase 5)
+  // ==========================================
+  
+  /**
+   * Make prediction using deployed model
+   * This calls the endpoint created by app.include_router(inference_router)
+   */
+  static async predictWithModel(modelId: string, text: string) {
+    const response = await apiClient.post(`/models/${modelId}/predict`, {
+      text: text
+    });
+    return response.data;
+  }
+
+  /**
+   * Batch predictions (multiple texts at once)
+   */
+  static async batchPredict(modelId: string, texts: string[]) {
+    const response = await apiClient.post(`/models/${modelId}/predict/batch`, {
+      texts: texts
+    });
+    return response.data;
+  }
+
+  /**
+   * Get model information and performance metrics
+   */
+  static async getModelInfo(modelId: string) {
+    const response = await apiClient.get(`/models/${modelId}/info`);
+    return response.data;
+  }
+
+  /**
+   * Get model usage analytics
+   */
+  static async getModelAnalytics(modelId: string, period: 'day' | 'week' | 'month' = 'week') {
+    const response = await apiClient.get(`/models/${modelId}/analytics`, {
+      params: { period }
+    });
+    return response.data;
+  }
+
+  // ==========================================
+  // MODEL MANAGEMENT ENDPOINTS
+  // ==========================================
   
   static async getModels(projectId?: string) {
     const params = projectId ? { project_id: projectId } : {};
@@ -215,11 +291,6 @@ export class ApiService {
 
   static async getModel(modelId: string) {
     const response = await apiClient.get(`/models/${modelId}`);
-    return response.data;
-  }
-
-  static async deployModel(modelId: string) {
-    const response = await apiClient.post(`/models/${modelId}/deploy`);
     return response.data;
   }
 
@@ -233,23 +304,9 @@ export class ApiService {
     return response.data;
   }
 
-  // ===== MODEL INFERENCE ENDPOINTS =====
-  
-  static async predictWithModel(modelId: string, inputData: any) {
-    const response = await apiClient.post(`/models/${modelId}/predict`, {
-      data: inputData,
-    });
-    return response.data;
-  }
-
-  static async batchPredict(modelId: string, batchData: any[]) {
-    const response = await apiClient.post(`/models/${modelId}/predict/batch`, {
-      data: batchData,
-    });
-    return response.data;
-  }
-
-  // ===== ANALYTICS & MONITORING =====
+  // ==========================================
+  // ANALYTICS & DASHBOARD ENDPOINTS
+  // ==========================================
   
   static async getDashboardStats() {
     const response = await apiClient.get('/dashboard/stats');
@@ -268,7 +325,9 @@ export class ApiService {
     return response.data;
   }
 
-  // ===== UTILITY ENDPOINTS =====
+  // ==========================================
+  // UTILITY ENDPOINTS
+  // ==========================================
   
   static async healthCheck() {
     const response = await apiClient.get('/health');
@@ -283,6 +342,55 @@ export class ApiService {
   static async testDatabaseConnection() {
     const response = await apiClient.get('/test-db');
     return response.data;
+  }
+
+  // ==========================================
+  // 🧪 TESTING & DEBUGGING HELPERS
+  // ==========================================
+  
+  /**
+   * Test model prediction with sample data
+   */
+  static async testModelPrediction(modelId: string) {
+    const sampleTexts = [
+      "Saya ingin mengurus SBU konstruksi",
+      "Kenapa NIB saya belum keluar?",
+      "Website OSS error terus"
+    ];
+    
+    const predictions = await Promise.all(
+      sampleTexts.map(text => this.predictWithModel(modelId, text))
+    );
+    
+    return {
+      sample_texts: sampleTexts,
+      predictions: predictions
+    };
+  }
+
+  /**
+   * Check if all services are healthy
+   */
+  static async checkSystemHealth() {
+    try {
+      const [health, db, worker] = await Promise.all([
+        this.healthCheck(),
+        this.testDatabaseConnection(),
+        this.getWorkerStatus()
+      ]);
+
+      return {
+        api: health,
+        database: db,
+        worker: worker,
+        overall_status: "healthy"
+      };
+    } catch (error) {
+      return {
+        overall_status: "unhealthy",
+        error: error instanceof Error ? error.message : 'Unknown error'
+      };
+    }
   }
 }
 

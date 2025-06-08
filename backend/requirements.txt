@@ -44,3 +44,5 @@ prometheus-client==0.19.0
 
 # Excel/CSV Processing (for dataset uploads)
 xlrd==2.0.1
+
+flower==2.0.1              # Celery monitoring dashboard
