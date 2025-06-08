@@ -1,3 +1,11 @@
+#!/bin/bash
+# Apply main.py fix
+
+echo "🔧 Backing up current main.py..."
+cp backend/main.py backend/main.py.backup
+
+echo "📝 Applying safe main.py..."
+cat > backend/main.py << 'EOF'
 from fastapi import FastAPI, Depends
 from fastapi.middleware.cors import CORSMiddleware
 from contextlib import asynccontextmanager
@@ -15,7 +23,7 @@ class SimpleUserCreate(BaseModel):
     password: str
     full_name: str = None
 
-# Create tables on startup - EXTRA SAFE VERSION
+# Create tables on startup - SAFE VERSION
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     try:
@@ -25,7 +33,7 @@ async def lifespan(app: FastAPI):
         print("✅ Database tables created successfully")
     except Exception as e:
         print(f"❌ Database startup error: {e}")
-        print("🔧 API will continue with limited functionality...")
+        print("🔧 Continuing with limited functionality...")
     yield
 
 # Initialize FastAPI app
@@ -66,14 +74,13 @@ app.include_router(
 async def root():
     return {
         "message": "AI Platform API",
-        "version": "1.0.0", 
-        "status": "active",
-        "note": "Authentication system ready"
+        "version": "1.0.0",
+        "status": "active"
     }
 
 @app.get("/health")
 async def health_check():
-    return {"status": "healthy", "message": "API server is running"}
+    return {"status": "healthy"}
 
 @app.get("/protected")
 async def protected_endpoint(user: User = Depends(current_active_user)):
@@ -81,9 +88,7 @@ async def protected_endpoint(user: User = Depends(current_active_user)):
         "message": f"Hello {user.email}!",
         "user_id": str(user.id),
         "subscription": user.subscription_plan,
-        "models_created": user.models_created,
-        "full_name": user.full_name,
-        "created_at": user.created_at.isoformat() if user.created_at else None
+        "models_created": user.models_created
     }
 
 @app.get("/test-db")
@@ -98,37 +103,20 @@ async def test_database():
                 "database": "connected",
                 "type": "PostgreSQL", 
                 "version": str(version[0]) if version else "unknown",
-                "status": "✅ Working perfectly"
+                "status": "Working"
             }
     except Exception as e:
         return {
             "database": "error", 
-            "message": str(e),
-            "status": "❌ Connection failed"
-        }
-
-# Clean reset endpoint
-@app.post("/reset-user-table")
-async def reset_user_table():
-    """Reset only user table for testing"""
-    try:
-        from app.core.database import async_engine
-        from sqlalchemy import text
-        
-        async with async_engine.begin() as conn:
-            # Drop only users table
-            await conn.execute(text("DROP TABLE IF EXISTS users CASCADE"))
-            
-            # Recreate just the user table
-            await conn.run_sync(Base.metadata.create_all)
-            
-        return {
-            "status": "success",
-            "message": "User table reset successfully",
-            "note": "You can now register new users"
-        }
-    except Exception as e:
-        return {
-            "status": "error",
             "message": str(e)
         }
+EOF
+
+echo "✅ main.py updated successfully!"
+echo ""
+echo "🚀 Now test the backend:"
+echo "cd backend && python -m uvicorn main:app --reload"
+echo ""
+echo "🔍 Test endpoints:"
+echo "curl http://127.0.0.1:8000/health"
+echo "curl http://127.0.0.1:8000/test-db"

@@ -11,6 +11,7 @@ import RegisterPage from './pages/Register';
 import DashboardPage from './pages/Dashboard';
 import ProjectsPage from './pages/Projects';
 import TrainingPage from './pages/Training';
+import TestFileUploadPage from './pages/TestFileUpload';
 
 // Create Material-UI theme
 const theme = createTheme({
@@ -148,6 +149,7 @@ const AppContent: React.FC = () => {
               {/* Default redirects */}
               <Route path="/" element={<Navigate to="/dashboard" replace />} />
               <Route path="*" element={<Navigate to="/dashboard" replace />} />
+              <Route path="/test-upload" element={<TestFileUploadPage />} />
             </Routes>
           </Router>
         </ErrorBoundary>
